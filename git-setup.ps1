@@ -189,6 +189,49 @@ function gitnew($label,$repo){
 }
 function gitsetup { powershell -ExecutionPolicy Bypass -File "$HOME\.git-setup.ps1" }
 Set-Alias gitadd-account gitsetup
+function gitremove {
+    param([string]$label)
+    if(-not (Test-Path $GitAccountsFile)){ "No accounts configured."; return }
+    $lines = Get-Content $GitAccountsFile | Where-Object { $_ -match '\|' }
+    if(-not $lines){ "No accounts configured."; return }
+    if(-not $label){
+        "{0,-12} {1,-18} {2}" -f "LABEL","GITHUB USER","EMAIL"
+        $lines | ForEach-Object { $p = $_ -split '\|'; "{0,-12} {1,-18} {2}" -f $p[0],$p[1],$p[2] }
+        $label = (Read-Host "  Which label to remove?").Trim()
+    }
+    if(-not $label){ return }
+    $match = $lines | Where-Object { ($_ -split '\|')[0] -eq $label } | Select-Object -First 1
+    if(-not $match){ "Unknown account: $label (try: gitaccounts)"; return }
+    $p = $match -split '\|'; $hostAlias = $p[4]; $keypath = $p[3]
+
+    $keep = $lines | Where-Object { ($_ -split '\|')[0] -ne $label }
+    if($keep){ Set-Content -Path $GitAccountsFile -Value $keep -Encoding UTF8 }
+    else { Clear-Content -Path $GitAccountsFile }
+    "  Removed '$label' from accounts."
+
+    $sshCfg = Join-Path $HOME ".ssh\config"
+    if(Test-Path $sshCfg){
+        $cfgLines = Get-Content $sshCfg
+        $out = [System.Collections.Generic.List[string]]::new()
+        $skip = $false
+        foreach($ln in $cfgLines){
+            if($ln -match "^Host\s+(.+)$"){ $skip = ($Matches[1].Trim() -eq $hostAlias) }
+            if(-not $skip){ $out.Add($ln) }
+        }
+        Set-Content -Path $sshCfg -Value $out -Encoding UTF8
+        "  Removed SSH config entry for '$hostAlias'."
+    }
+
+    if(Test-Path $keypath){
+        $del = Read-Host "  Delete SSH key '$keypath'? (y/n) [n]"
+        if($del.ToLower() -eq "y"){
+            Remove-Item $keypath -Force -ErrorAction SilentlyContinue
+            Remove-Item "$keypath.pub" -Force -ErrorAction SilentlyContinue
+            "  Deleted SSH key files."
+        }
+    }
+    "Account '$label' removed. Run:  . $PROFILE   to reload shortcuts."
+}
 function githelp {
 @"
 
@@ -199,6 +242,7 @@ function githelp {
   gituse <label>         switch current repo to an account
   gitclone <label> <url> clone a repo as an account (owner/repo or full URL)
   gitnew <label> [repo]  init a NEW repo here as an account (+remote if repo given)
+  gitremove [label]      remove a configured account
   gitsetup               re-run the wizard (add accounts, fix keys)
 
   Per-account shortcuts (auto-generated): git-<label>, <label>-clone, <label>-init

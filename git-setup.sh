@@ -209,6 +209,39 @@ gitnew(){
 gitsetup(){ bash "$HOME/.git-setup.sh"; }
 gitadd-account(){ bash "$HOME/.git-setup.sh"; }
 
+gitremove(){
+  local label="${1:-}"
+  [ -f "$GIT_ACCOUNTS_FILE" ] || { echo "No accounts configured."; return; }
+  if [ -z "$label" ]; then
+    gitaccounts
+    read -r -p "  Which label to remove? " label
+  fi
+  [ -z "$label" ] && return
+  local line; line="$(_ga_line "$label")"
+  [ -z "$line" ] && { echo "Unknown account: $label (try: gitaccounts)"; return 1; }
+  IFS='|' read -r _l _u _e keypath host <<< "$line"
+
+  local tmp; tmp="$(mktemp)"
+  grep -v "^${label}|" "$GIT_ACCOUNTS_FILE" > "$tmp" && mv "$tmp" "$GIT_ACCOUNTS_FILE"
+  echo "  Removed '$label' from accounts."
+
+  local ssh_cfg="$HOME/.ssh/config"
+  if [ -f "$ssh_cfg" ]; then
+    local tmp2; tmp2="$(mktemp)"
+    awk -v h="$host" '/^Host /{skip=($2==h?1:0)} !skip{print}' "$ssh_cfg" > "$tmp2" && mv "$tmp2" "$ssh_cfg"
+    echo "  Removed SSH config entry for '$host'."
+  fi
+
+  if [ -f "$keypath" ]; then
+    local del; del="$(ask "  Delete SSH key '$keypath'? (y/n)" "n")"
+    if [ "${del,,}" = "y" ]; then
+      rm -f "$keypath" "${keypath}.pub"
+      echo "  Deleted SSH key files."
+    fi
+  fi
+  echo "Account '$label' removed. Run:  source ~/.bashrc   to reload shortcuts."
+}
+
 githelp(){
   cat <<EOF
 
@@ -219,6 +252,7 @@ githelp(){
   gituse <label>         switch current repo to an account
   gitclone <label> <url> clone a repo as an account (owner/repo or full URL)
   gitnew <label> [repo]  init a NEW repo here as an account (+remote if repo given)
+  gitremove [label]      remove a configured account
   gitsetup               re-run the wizard (add accounts, fix keys)
   gitadd-account         same as gitsetup
 
