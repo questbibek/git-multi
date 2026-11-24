@@ -1,11 +1,19 @@
 # Git Multi-Account Manager
 
 Interactive setup + helper commands for using **multiple GitHub accounts** on one
-machine. Works in **WSL, Git Bash, and PowerShell**. Add as many accounts as you
+machine. Works on **macOS (zsh or bash), Linux, WSL, Git Bash, and PowerShell**. Add as many accounts as you
 like, anytime. Per-account SSH keys are created/reused with guidance, and the
 public key is shown so you can paste it into GitHub before the connection is tested.
 
 ## Setup (run once per environment)
+
+**macOS (zsh, the default shell):**
+```bash
+bash git-setup.sh
+source ~/.zshrc
+githelp
+```
+Helpers go into `~/.zshrc` when your login shell is zsh, otherwise `~/.bashrc`.
 
 **WSL or Git Bash:**
 ```bash
@@ -52,7 +60,7 @@ default identity and installs the helper commands.
 |---|---|
 | `~/.git-accounts` | Your accounts (label, user, email, key path, host alias) |
 | `~/.ssh/config` | Host aliases (`github.com-<label>`) |
-| `~/.bashrc` / `$PROFILE` | Helper commands (in a marked block) |
+| `~/.zshrc` / `~/.bashrc` / `$PROFILE` | Helper commands (in a marked block) |
 | `~/.git-setup.sh` / `~/.git-setup.ps1` | Copy of the wizard, used by `gitsetup` |
 
 ## Add another account later

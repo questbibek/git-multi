@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================
-#  git-multi-account  (Bash: WSL + Git Bash)
+#  git-multi-account  (Bash/Zsh: macOS, Linux, WSL, Git Bash)
 #  Interactive multi-GitHub-account manager.
 #
 #  FIRST-TIME SETUP (run once per environment):
@@ -8,16 +8,22 @@
 #
 #  It will: walk you through adding accounts (unlimited), guide
 #  SSH key creation/reuse per account, write ~/.ssh/config,
-#  save ~/.git-accounts, install helper functions into ~/.bashrc.
+#  save ~/.git-accounts, install helper functions into ~/.zshrc
+#  (if your login shell is zsh) or ~/.bashrc.
 #
-#  After setup, reload:  source ~/.bashrc
+#  After setup, reload:  source ~/.zshrc   (or ~/.bashrc)
 #  Then type:  githelp
 # =============================================================
 set -uo pipefail
 
 ACCOUNTS_FILE="$HOME/.git-accounts"
 SSH_CONFIG="$HOME/.ssh/config"
-BASHRC="$HOME/.bashrc"
+# Install helpers into the rc file of the user's login shell (zsh on macOS, bash elsewhere)
+case "$(basename "${SHELL:-bash}")" in
+  zsh) RCFILE="$HOME/.zshrc" ;;
+  *)   RCFILE="$HOME/.bashrc" ;;
+esac
+RCNAME="~/$(basename "$RCFILE")"
 MARK_START="# >>> git-multi-account >>>"
 MARK_END="# <<< git-multi-account <<<"
 
@@ -25,6 +31,7 @@ c_cyan='\033[0;36m'; c_grn='\033[0;32m'; c_yel='\033[0;33m'; c_red='\033[0;31m';
 say(){ echo -e "${c_cyan}==>${c_off} $1"; }
 ok(){  echo -e "  ${c_grn}OK${c_off} $1"; }
 warn(){ echo -e "  ${c_yel}!${c_off} $1"; }
+lower(){ echo "$1" | tr '[:upper:]' '[:lower:]'; }  # bash 3.2 (macOS) has no ${var,,}
 
 mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh" 2>/dev/null
 
@@ -56,7 +63,7 @@ add_one_account(){
     echo
     warn "No key found at $default_key"
     genkey="$(ask "  Generate a new SSH key for '$label'? (y/n)" "y")"
-    if [ "${genkey,,}" = "y" ]; then
+    if [ "$(lower "$genkey")" = "y" ]; then
       ssh-keygen -t ed25519 -C "${label}-github" -f "$default_key" -N ""
       keypath="$default_key"
       ok "Key created: $default_key"
@@ -109,7 +116,7 @@ run_wizard(){
   say "Git Multi-Account Setup"
   touch "$ACCOUNTS_FILE"
   local more="y"
-  while [ "${more,,}" = "y" ]; do
+  while [ "$(lower "$more")" = "y" ]; do
     add_one_account
     echo
     more="$(ask "Add another account? (y/n)" "n")"
@@ -128,20 +135,28 @@ run_wizard(){
     fi
   fi
 
-  # WSL/Windows-filesystem friendliness
-  git config --global --add safe.directory '*' 2>/dev/null
+  # WSL / Git Bash: repos on the Windows filesystem trip git's ownership check.
+  # Skip on macOS/Linux, where it would only switch that safety check off globally.
+  case "$(uname -s) $(uname -r)" in
+    *[Mm]icrosoft*|MINGW*|MSYS*|CYGWIN*)
+      git config --global --get-all safe.directory 2>/dev/null | grep -qxF '*' \
+        || git config --global --add safe.directory '*' ;;
+  esac
 
   install_helpers
   echo
-  ok "Done! Run:  source ~/.bashrc   then:  githelp"
+  ok "Done! Run:  source ${RCNAME}   then:  githelp"
 }
 
 install_helpers(){
-  # remove old block if present, then append fresh
-  if grep -q "$MARK_START" "$BASHRC" 2>/dev/null; then
-    sed -i "/$MARK_START/,/$MARK_END/d" "$BASHRC"
+  # remove old block if present, then append fresh (awk instead of sed -i: BSD/GNU differ)
+  if grep -qF "$MARK_START" "$RCFILE" 2>/dev/null; then
+    local tmp; tmp="$(mktemp)"
+    awk -v s="$MARK_START" -v e="$MARK_END" '$0==s{skip=1} !skip{print} $0==e{skip=0}' "$RCFILE" > "$tmp" \
+      && cat "$tmp" > "$RCFILE"
+    rm -f "$tmp"
   fi
-  cat >> "$BASHRC" <<'HELPERS'
+  cat >> "$RCFILE" <<'HELPERS'
 # >>> git-multi-account >>>
 GIT_ACCOUNTS_FILE="$HOME/.git-accounts"
 
@@ -167,9 +182,9 @@ gituse(){
   git config user.email "$e"
   local url; url="$(git remote get-url origin 2>/dev/null)"
   if [ -n "$url" ]; then
-    # rewrite host portion to the alias
-    local path="${url#*github.com*:}"; path="${path#*github.com*/}"
-    git remote set-url origin "git@${h}:${path}"
+    # rewrite host portion to the alias ("rpath", not "path": zsh ties $path to $PATH)
+    local rpath="${url#*github.com*:}"; rpath="${rpath#*github.com*/}"
+    git remote set-url origin "git@${h}:${rpath}"
   fi
   echo "Switched to '$l' ($u <$e>)"
   gitwho
@@ -214,7 +229,7 @@ gitremove(){
   [ -f "$GIT_ACCOUNTS_FILE" ] || { echo "No accounts configured."; return; }
   if [ -z "$label" ]; then
     gitaccounts
-    read -r -p "  Which label to remove? " label
+    printf "  Which label to remove? "; read -r label   # no read -p: zsh treats -p as coprocess
   fi
   [ -z "$label" ] && return
   local line; line="$(_ga_line "$label")"
@@ -222,7 +237,8 @@ gitremove(){
   IFS='|' read -r _l _u _e keypath host <<< "$line"
 
   local tmp; tmp="$(mktemp)"
-  grep -v "^${label}|" "$GIT_ACCOUNTS_FILE" > "$tmp" && mv "$tmp" "$GIT_ACCOUNTS_FILE"
+  # grep -v exits 1 when no lines remain (removing the last account), so don't gate mv on it
+  { grep -v "^${label}|" "$GIT_ACCOUNTS_FILE" || true; } > "$tmp" && mv "$tmp" "$GIT_ACCOUNTS_FILE"
   echo "  Removed '$label' from accounts."
 
   local ssh_cfg="$HOME/.ssh/config"
@@ -233,13 +249,12 @@ gitremove(){
   fi
 
   if [ -f "$keypath" ]; then
-    local del; del="$(ask "  Delete SSH key '$keypath'? (y/n)" "n")"
-    if [ "${del,,}" = "y" ]; then
-      rm -f "$keypath" "${keypath}.pub"
-      echo "  Deleted SSH key files."
-    fi
+    local del; printf "  Delete SSH key '%s'? (y/n) [n]: " "$keypath"; read -r del
+    case "$del" in
+      [yY]*) rm -f "$keypath" "${keypath}.pub"; echo "  Deleted SSH key files." ;;
+    esac
   fi
-  echo "Account '$label' removed. Run:  source ~/.bashrc   to reload shortcuts."
+  echo "Account '$label' removed. Open a new terminal to reload shortcuts."
 }
 
 githelp(){
@@ -289,7 +304,7 @@ if [ -s "$GIT_ACCOUNTS_FILE" ]; then
 fi
 # <<< git-multi-account <<<
 HELPERS
-  ok "Helpers installed into ~/.bashrc"
+  ok "Helpers installed into ${RCNAME}"
 }
 
 # Keep a copy of this script where gitsetup expects it
